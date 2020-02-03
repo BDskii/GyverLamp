@@ -75,7 +75,7 @@ void fireRoutine() {
     pcnt = 0;
   }
   drawFrame(pcnt);
-  pcnt += 30;
+  pcnt += 50;
 }
 
 // Randomly generate the next line (matrix row)
@@ -115,9 +115,12 @@ void drawFrame(int pcnt) {
       uint8_t newX = x;
       if (x > 15) newX = x - 15;
       if (y < 8) {
+        
+        int modPcnt = random(25, 75);
+        
         nextv =
-          (((100.0 - pcnt) * matrixValue[y][newX]
-            + pcnt * matrixValue[y - 1][newX]) / 100.0)
+          (((100.0 - modPcnt) * matrixValue[y][newX]
+            + modPcnt * matrixValue[y - 1][newX]) / 100.0)
           - pgm_read_byte(&(valueMask[y][newX]));
 
         CRGB color = CHSV(

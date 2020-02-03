@@ -30,10 +30,6 @@
    -  Синхронизированы изменения с версией 1.5.5 оригинальной прошивки
    -  Добавлено: режим "недоступно" в HomeAssistant после  обесточивания лампы
    -  Добавлено: Управление мощностью передатчика
-   -  Добавлено: Запуск точки доступа с открытием портала первоначальной настройки. Для его активации нужно в течении одной минуты пять раз подать питание и обесточить лампу (включить/выключить из розетки)
-   -  Добавлено: Демо режим: в демо режиме эффекты запускаются случайно по таймеру. Задать интервал обновления можно в переменной Timer *demoTimer = new Timer(60000);
-                                                                                                                                                                 ^  - в миллисекундах 
-   -  Добавлено: В демо режиме пропускается эффект "смена цвета" если переменная epilepsy инициализирована в false
 
 */
 
@@ -45,7 +41,7 @@
 
 // ============= НАСТРОЙКИ =============
 // -------- ВРЕМЯ -------
-#define GMT 5              // смещение (москва 3)
+#define GMT 3              // смещение (москва 3)
 #define NTP_ADDRESS  "europe.pool.ntp.org"    // сервер времени
 
 // -------- РАССВЕТ -------
@@ -54,18 +50,16 @@
 
 // ---------- МАТРИЦА ---------
 #define BRIGHTNESS 40         // стандартная маскимальная яркость (0-255)
-#define CURRENT_LIMIT 2000    // лимит по току в миллиамперах, автоматически управляет яркостью (пожалей свой блок питания!) 0 - выключить лимит
+#define CURRENT_LIMIT 2500    // лимит по току в миллиамперах, автоматически управляет яркостью (пожалей свой блок питания!) 0 - выключить лимит
 
 #define WIDTH 16              // ширина матрицы
-//#define HEIGHT 16             // высота матрицы
-#define HEIGHT 11             // высота матрицы (вертикальные ленты)
+#define HEIGHT 16             // высота матрицы
 
 #define COLOR_ORDER GRB       // порядок цветов на ленте. Если цвет отображается некорректно - меняйте. Начать можно с RGB
 
 #define MATRIX_TYPE 0         // тип матрицы: 0 - зигзаг, 1 - параллельная
 #define CONNECTION_ANGLE 0    // угол подключения: 0 - левый нижний, 1 - левый верхний, 2 - правый верхний, 3 - правый нижний
-//#define STRIP_DIRECTION 0     // направление ленты из угла: 0 - вправо, 1 - вверх, 2 - влево, 3 - вниз
-#define STRIP_DIRECTION 1     // для вертикальных лент. направление ленты из угла: 0 - вправо, 1 - вверх, 2 - влево, 3 - вниз
+#define STRIP_DIRECTION 0     // направление ленты из угла: 0 - вправо, 1 - вверх, 2 - влево, 3 - вниз
 // при неправильной настройке матрицы вы получите предупреждение "Wrong matrix parameters! Set to default"
 // шпаргалка по настройке матрицы здесь! https://alexgyver.ru/matrix_guide/
 
@@ -96,7 +90,7 @@ byte IP_AP[] = {192, 168, 4, 100};   // статический IP точки д�
 
 //#define DEBUG
 
-#include "timerMinim.h"
+#include <SimpleTimer.h>
 #include <FastLED.h>
 #include <ESP8266WiFi.h>
 #include <DNSServer.h>
@@ -112,7 +106,6 @@ byte IP_AP[] = {192, 168, 4, 100};   // статический IP точки д�
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <ArduinoOTA.h>
-#include <Timer.h>
 #include "fonts.h"
 
 #define MQTT_MAX_PACKET_SIZE 1024
@@ -122,8 +115,7 @@ CRGB leds[NUM_LEDS];
 WiFiUDP Udp;
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, NTP_ADDRESS, GMT * 3600, NTP_INTERVAL);
-timerMinim timeTimer(1000);
-timerMinim timeStrTimer(120);
+SimpleTimer timer;
 GButton touch(BTN_PIN, LOW_PULL, NORM_OPEN);
 ESP8266WebServer *http; // запуск слушателя 80 порта (эйкей вебсервер)
 
@@ -136,19 +128,16 @@ char packetBuffer[UDP_TX_PACKET_MAX_SIZE + 1]; //buffer to hold incoming packet
 String inputBuffer;
 static const byte maxDim = max(WIDTH, HEIGHT);
 
-struct {
+struct ModeSettings{
   byte brightness = 50;
   byte speed = 30;
   byte scale = 40;
-} modes[MODE_AMOUNT];
+}; 
+ModeSettings modes[MODE_AMOUNT];
 
 byte r = 255;
 byte g = 255;
 byte b = 255;
-
-byte boot_count = 0;
-bool demo = false;
-bool epilepsy = false; // отключает эффект "смена цвета" в демо режиме если задано false. 
 
 struct {
   boolean state = false;
@@ -158,14 +147,12 @@ struct {
 byte dawnOffsets[] = {5, 10, 15, 20, 25, 30, 40, 50, 60};
 byte dawnMode;
 boolean dawnFlag = false;
-long thisTime;
 boolean manualOff = false;
 boolean sendSettings_flag = false;
 
 int8_t currentMode = 0;
 boolean loadingFlag = true;
-boolean ONflag = true;
-uint32_t eepromTimer;
+boolean ONflag = false;
 boolean settChanged = false;
 // Конфетти, Огонь, Радуга верт., Радуга гориз., Смена цвета,
 // Безумие 3D, Облака 3D, Лава 3D, Плазма 3D, Радуга 3D,
@@ -175,7 +162,7 @@ unsigned char matrixValue[8][16];
 String lampIP = "";
 byte hrs, mins, secs;
 byte days;
-String timeStr = "00:00";
+
 
 WiFiClient espClient;
 PubSubClient mqttclient(espClient);
@@ -209,8 +196,7 @@ byte mac[6];
 
 ADC_MODE (ADC_VCC);
 
-Timer *infoTimer = new Timer(60000);
-Timer *demoTimer = new Timer(60000); //  время переключения эффектов в "Демо" режиме
+int alarmTimerID;
 
 void setup() {
 
@@ -229,13 +215,6 @@ void setup() {
   
   EEPROM.begin(512);
 
-  // читаем количество запусков
-  boot_count = EEPROM.read(410);
-  boot_count +=1;
-
-  // записываем колиество перезапусков
-  EEPROM.write(410, boot_count); EEPROM.commit();
-
   // WI-FI
   if (ESP_MODE == 0) {    // режим точки доступа
     WiFi.softAPConfig(IPAddress(IP_AP[0], IP_AP[1], IP_AP[2], IP_AP[3]),
@@ -249,7 +228,7 @@ void setup() {
     Serial.println(myIP);
     USE_MQTT = false;
 
-  } else {  // подключаемся к роутеру
+  } else {                // подключаемся к роутеру
 
     char esp_id[32] = "";
 
@@ -275,19 +254,6 @@ void setup() {
     wifiManager.addParameter(&custom_mqtt_password);
     wifiManager.addParameter(&custom_mqtt_port);
     wifiManager.addParameter(&custom_text_2);
-
-    if (boot_count >= 5) {
-      while (!fillString("Сброс параметров подключения!", CRGB::Red, true)) {
-        delay(1); yield();
-      }
-
-      // обнуляем счетчик перезапусков
-      boot_count = 0; EEPROM.write(410, boot_count); EEPROM.commit();
-
-      if (!wifiManager.startConfigPortal()) {
-         Serial.println("failed to start config Portal");
-      }
-    }
 
     if (!wifiManager.autoConnect()) {
       if (!wifiManager.startConfigPortal()) {
@@ -366,38 +332,8 @@ void setup() {
   // EEPROM
   
   delay(50);
-  
-  if (EEPROM.read(198) != 20) {   // первый запуск
-    EEPROM.write(198, 20);
-    //EEPROM.commit();
+  initEEPROM();
 
-    for (byte i = 0; i < MODE_AMOUNT; i++) {
-      EEPROM.put(3 * i + 40, modes[i]);
-      //EEPROM.commit();
-    }
-    for (byte i = 0; i < 7; i++) {
-      EEPROM.write(5 * i, alarm[i].state);   // рассвет
-      eeWriteInt(5 * i + 1, alarm[i].time);
-      //EEPROM.commit();
-    }
-    EEPROM.write(199, 0);   // рассвет
-    EEPROM.write(200, 0);   // режим
-    
-    EEPROM.commit();
-  }
-
-  for (byte i = 0; i < MODE_AMOUNT; i++) {
-    EEPROM.get(3 * i + 40, modes[i]);
-  }
-  
-  for (byte i = 0; i < 7; i++) {
-    alarm[i].state = EEPROM.read(5 * i);
-    alarm[i].time = eeGetInt(5 * i + 1);
-  }
-  
-  dawnMode = EEPROM.read(199);
-  currentMode = (int8_t)EEPROM.read(200);
-  FastLED.setBrightness(modes[currentMode].brightness);
 
   // отправляем настройки
   sendSettings();
@@ -420,7 +356,6 @@ void setup() {
     count++;
     delay(500);
   }
-  updTime();
   
   webserver();
   MDNS.addService("http", "tcp", 80);
@@ -439,22 +374,24 @@ void setup() {
   _BTN_CONNECTED ? Serial.println("Обнаружена сенсорная кнопка") : Serial.println("Cенсорная кнопка не обнаружена, управление сенсорной кнопкой отключено");
   #endif
 
-  infoTimer->setOnTimer(&infoCallback);
-  infoTimer->Start();
+  timer.setInterval(1000, updateCurrentTime); //Каждую секунду
+  timer.setInterval(1800000, timeUpdate); //синхронизация времени каждые 30 минут
+  timer.setInterval(3000, checkDawn); //каждые 3 секунды проверяем рассвет
+  timer.setInterval(30000, eepromTick); //каждые 30 секунды проверяем наличие настроек для сохранения
+  timer.setInterval(60000, infoCallback); //Каждые 60 секунды обявляем служебную инфу в MQTT
+  alarmTimerID = timer.setInterval(200, showAlarm); //Выполняет фактическую отрисовку будильника
+  timer.disable(alarmTimerID);
 
-  demoTimer->setOnTimer(&demoCallback);
-  demoTimer->Start();
+  FastLED.clear();
+  FastLED.show();
 
 }
 
 void loop() {
-  infoTimer->Update();
-  demoTimer->Update();
 
   parseUDP();
   effectsTick();
-  eepromTick();
-  timeTick();
+  timer.run();
   buttonTick();
 
   MDNS.update();
@@ -465,23 +402,4 @@ void loop() {
 
   ArduinoOTA.handle();
   yield();
-}
-
-void eeWriteInt(int pos, int val) {
-  byte* p = (byte*) &val;
-  EEPROM.write(pos, *p);
-  EEPROM.write(pos + 1, *(p + 1));
-  EEPROM.write(pos + 2, *(p + 2));
-  EEPROM.write(pos + 3, *(p + 3));
-  EEPROM.commit();
-}
-
-int eeGetInt(int pos) {
-  int val;
-  byte* p = (byte*) &val;
-  *p        = EEPROM.read(pos);
-  *(p + 1)  = EEPROM.read(pos + 1);
-  *(p + 2)  = EEPROM.read(pos + 2);
-  *(p + 3)  = EEPROM.read(pos + 3);
-  return val;
 }

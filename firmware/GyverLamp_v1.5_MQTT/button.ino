@@ -9,7 +9,6 @@ void buttonTick() {
 
   touch.tick();
   if (touch.isSingle()) {
-    demo = false;
     if (dawnFlag) {
       manualOff = true;
       dawnFlag = false;
@@ -20,9 +19,11 @@ void buttonTick() {
     } else {
       if (ONflag) {
         ONflag = false;
+        settChanged = true;
         changePower();
       } else {
         ONflag = true;
+        settChanged = true;
         changePower();
         MQTTUpdateState();
       }
@@ -32,25 +33,21 @@ void buttonTick() {
   }
 
   if (ONflag && touch.isDouble()) {
-    demo = false;
     if (++currentMode >= MODE_AMOUNT) currentMode = 0;
     FastLED.setBrightness(modes[currentMode].brightness);
     loadingFlag = true;
     settChanged = true;
-    eepromTimer = millis();
     FastLED.clear();
     delay(1);
     sendSettings_flag = true;
     MQTTUpdateState();
   }
 
-if (ONflag && touch.isTriple()) {
-    demo = false;
+  if (ONflag && touch.isTriple()) {
     if (--currentMode < 0) currentMode = MODE_AMOUNT - 1;
     FastLED.setBrightness(modes[currentMode].brightness);
     loadingFlag = true;
     settChanged = true;
-    eepromTimer = millis();
     FastLED.clear();
     delay(1);
     MQTTUpdateState();
@@ -71,7 +68,6 @@ if (ONflag && touch.isTriple()) {
   if (ONflag && touch.isHolded()) {
     brightDirection = !brightDirection;
   }
-  
   if (ONflag && touch.isStep()) {
     if (brightDirection) {
       if (modes[currentMode].brightness < 10) modes[currentMode].brightness += 1;
@@ -84,7 +80,6 @@ if (ONflag && touch.isTriple()) {
     }
     FastLED.setBrightness(modes[currentMode].brightness);
     settChanged = true;
-    eepromTimer = millis();
     sendSettings_flag = true;
     MQTTUpdateState();
   }

@@ -207,32 +207,25 @@ void routeSetConfig() {
   if (http->hasArg("on")) {
     
     ONflag = (http->arg("on").toInt() > 0) ? true : false;
+    settChanged = true;
     changePower();
     sendCurrent();
     
   }
   
-  if (http->hasArg("currentMode")) {
+  if (http->hasArg("currentMode")){
     
     String value;
 
     value = http->arg("currentMode");
+    
     currentMode =  value.toInt();
-
-    if (currentMode == 18) {
-
-      demo = true;
-      currentMode = random(0, MODE_AMOUNT-1);      
-    } else {
-
-      demo = false;
-      currentMode =  value.toInt();
-      if (currentMode >= MODE_AMOUNT || currentMode < 0) currentMode = 0;
-    }
-
+           
+    if (currentMode >= MODE_AMOUNT || currentMode < 0) currentMode = 0;
+    
     manualOff = true;
     dawnFlag = false;
-    settChanged = true;
+    saveEEPROM();
     loadingFlag = true;
     FastLED.clear();
     delay(1);
@@ -249,19 +242,18 @@ void routeSetConfig() {
     modes[currentMode].scale = scale;
     loadingFlag = true;
     settChanged = true;
-    eepromTimer = millis();
 
   }
   
   if(http->hasArg("brightness")){
-    ONflag = true;    
+    ONflag = true;  
+    settChanged = true;  
     modes[currentMode].brightness = http->arg("brightness").toInt();
     changePower();
     FastLED.setBrightness(modes[currentMode].brightness);
 
     sendCurrent();
     settChanged = true;
-    eepromTimer = millis();
 
   }
   
@@ -269,7 +261,6 @@ void routeSetConfig() {
     modes[currentMode].speed = http->arg("speed").toInt();
     loadingFlag = true;
     settChanged = true;
-    eepromTimer = millis();
 
   }
   
@@ -314,18 +305,18 @@ void routeSetAlarmConfig(){
     
     if(http->hasArg("day_"+String(i))){
       alarm[i].state = (http->arg("day_" + String(i)).toInt() > 0);
-      saveAlarm(i);
+      settChanged = true;
     }
     if(http->hasArg("time_"+String(i))){
       
       alarm[i].time = http->arg("time_" + String(i)).substring(0,2).toInt() * 60 + http->arg("time_" + String(i)).substring(3,5).toInt();
-      saveAlarm(i);
+      settChanged = true;
     }
   }
   
   if(http->hasArg("dawnMode")){
     dawnMode = http->arg("dawnMode").toInt();
-    saveDawnMmode();
+    settChanged = true;
   }
   
   routeGetAlarmConfig();
@@ -399,7 +390,6 @@ void routeHome(){
           out += "<option value='15'>Снегопад</option>";
           out += "<option value='16'>Матрица</option>";
           out += "<option value='17'>Светлячки</option>";
-          out += "<option value='18'>Демо</option>";
           
         out += "</select>";
       out += "</div>";

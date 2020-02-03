@@ -1,80 +1,88 @@
-byte minuteCounter = 0;
-CHSV dawnColor;
 
-void timeTick() {
-  if (ESP_MODE == 1) {
-    if (timeTimer.isReady()) {  // каждую секунду
-      secs++;
-      if (secs == 60) {
-        secs = 0;
-        mins++;
-        minuteCounter++;
-        updTime();
-      }
-      if (mins == 60) {
-        mins = 0;
-        hrs++;
-        if (hrs == 24) {
-          hrs = 0;
-          days++;
-          if (days > 6) days = 0;
-        }
-        updTime();
-      }
+void updateCurrentTime() {
+  if (ESP_MODE != 1) return;
 
-      if (minuteCounter > 30 && WiFi.status() == WL_CONNECTED) {    // синхронизация каждые 30 минут
-        minuteCounter = 0;
-        if (timeClient.update()) {
-          hrs = timeClient.getHours();
-          mins = timeClient.getMinutes();
-          secs = timeClient.getSeconds();
-          days = timeClient.getDay();
-        }
-      }
-
-      if (secs % 3 == 0) checkDawn();   // каждые 3 секунды проверяем рассвет
-    }
+  secs++;
+  if (secs == 60) {
+    secs = 0;
+    mins++;
   }
-  if (dawnFlag && timeStrTimer.isReady()) {
-    fill_solid(leds, NUM_LEDS, dawnColor);
-    fillString(timeStr, CRGB::Black, false);
-    delay(1);
-    yield();
-    FastLED.show();
+  if (mins == 60) {
+    mins = 0;
+    hrs++;
+    if (hrs == 24) {
+      hrs = 0;
+      days++;
+      if (days > 6) days = 0;
+    }
   }
 }
 
-void updTime() {
+void timeUpdate() {
+  if (timeClient.update()) {
+    hrs = timeClient.getHours();
+    mins = timeClient.getMinutes();
+    secs = timeClient.getSeconds();
+    days = timeClient.getDay();
+  }
+}
+
+String getTimeString(){
+
+  String timeStr;
   timeStr = String(hrs);
   timeStr += ":";
   timeStr += (mins < 10) ? "0" : "";
   timeStr += String(mins);
+
+  return timeStr;
 }
 
 void checkDawn() {
+
+  #ifdef DEBUG
+    Serial.println("Проверка рассвета.");
+  #endif
+
   byte thisDay = days;
   if (thisDay == 0) thisDay = 7;  // воскресенье это 0
   thisDay--;
-  thisTime = hrs * 60 + mins + (float)secs / 60;
+  int thisTime = hrs * 3600 + mins * 60 + secs;
+  int alarmBeginTime = (alarm[thisDay].time - dawnOffsets[dawnMode]) * 60;
+
+  #ifdef DEBUG
+    Serial.print("День:");
+    Serial.print(thisDay);
+    Serial.print(" Текущее время:");
+    Serial.print(thisTime);
+    Serial.println(".");
+  #endif
 
   // проверка рассвета
-  if (alarm[thisDay].state &&                                       // день будильника
-      thisTime >= (alarm[thisDay].time - dawnOffsets[dawnMode]) &&  // позже начала
-      thisTime < (alarm[thisDay].time + DAWN_TIMEOUT) ) {           // раньше конца + минута
+  if (alarm[thisDay].state &&        // день будильника
+      thisTime >= alarmBeginTime &&  // позже начала
+      thisTime < (alarm[thisDay].time + DAWN_TIMEOUT) * 60 ) {           // раньше конца + минута
+
+    #ifdef DEBUG
+        Serial.println("Время будильника:");
+        Serial.println(alarm[thisDay].time);
+        Serial.println(thisTime);
+        Serial.println(alarmBeginTime);
+      manualOff ? Serial.println("Рассвет остановлен.") : Serial.println("Рассвет запущен.");
+    #endif
+
     if (!manualOff) {
-      // величина рассвета 0-255
-      int dawnPosition = (float)255 * ((float)((float)thisTime - (alarm[thisDay].time - dawnOffsets[dawnMode])) / dawnOffsets[dawnMode]);
-      dawnPosition = constrain(dawnPosition, 0, 255);
-      dawnColor = CHSV(map(dawnPosition, 0, 255, 10, 35),
-                       map(dawnPosition, 0, 255, 255, 170),
-                       map(dawnPosition, 0, 255, 10, DAWN_BRIGHT));
-      FastLED.setBrightness(255);
+
       dawnFlag = true;
+      timer.enable(alarmTimerID);
+      
     }
   } else {
     if (dawnFlag) {
       dawnFlag = false;
       manualOff = false;
+      ONflag = false;
+      timer.disable(alarmTimerID);
       FastLED.setBrightness(modes[currentMode].brightness);
       FastLED.clear();
       FastLED.show();
@@ -82,6 +90,38 @@ void checkDawn() {
   }
 }
  
+void showAlarm(){
+
+  if (!dawnFlag) return;
+
+  byte thisDay = days;
+  if (thisDay == 0) thisDay = 7;  // воскресенье это 0
+  thisDay--;
+  int thisTime = hrs * 3600 + mins * 60 + secs;
+  int alarmBeginTime = (alarm[thisDay].time - dawnOffsets[dawnMode]) * 60;
+
+  //позиция рассвета от 0 до 1000
+  int dawnPosition = (float)1000 * (float)(thisTime - alarmBeginTime) / (float)(dawnOffsets[dawnMode] * 60);
+
+  #ifdef DEBUG
+    Serial.print("Позиция рассвета:");
+    Serial.println(dawnPosition);
+  #endif
+
+  dawnPosition = constrain(dawnPosition, 0, 1000);
+  CHSV dawnColor = CHSV(map(dawnPosition, 0, 1000, 10, 35),
+          map(dawnPosition, 0, 1000, 255, 170),
+          map(dawnPosition, 0, 1000, 10, DAWN_BRIGHT));
+
+  CHSV textColor = CHSV(120, 120, map(dawnPosition, 0, 1000, 10, DAWN_BRIGHT / 2 ));
+
+  fill_solid(leds, NUM_LEDS, dawnColor);   
+  fillString(getTimeString(), textColor, false);     
+  FastLED.setBrightness(255);
+
+}
+
+
 String getTimeStampString() {
    time_t rawtime = timeClient.getEpochTime();
    struct tm * ti;
